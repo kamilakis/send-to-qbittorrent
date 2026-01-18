@@ -91,4 +91,87 @@ window.addEventListener('DOMContentLoaded', async () => {
   setTimeout(() => {
     document.body.classList.remove("no-animation");
   }, 50);
+
+  loadCategories();
+});
+
+// Category management
+const defaultCategorySelect = document.getElementById('defaultCategorySelect');
+const refreshCategoriesButton = document.getElementById('refreshCategoriesButton');
+const showNewCategoryButton = document.getElementById('showNewCategoryButton');
+const newCategoryForm = document.getElementById('newCategoryForm');
+const newCategoryInput = document.getElementById('newCategoryInput');
+const newCategorySavePath = document.getElementById('newCategorySavePath');
+const createCategoryButton = document.getElementById('createCategoryButton');
+const cancelNewCategoryButton = document.getElementById('cancelNewCategoryButton');
+
+async function loadCategories() {
+  try {
+    const categories = await browser.runtime.sendMessage({ action: "getCategories" });
+    const categoryNames = Object.keys(categories || {}).sort();
+    const { defaultCategory } = await browser.storage.local.get('defaultCategory');
+
+    defaultCategorySelect.innerHTML = '<option value="">No category</option>';
+
+    categoryNames.forEach(name => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      if (name === defaultCategory) {
+        option.selected = true;
+      }
+      defaultCategorySelect.appendChild(option);
+    });
+  } catch (error) {
+    console.error('Failed to load categories:', error);
+  }
+}
+
+defaultCategorySelect.addEventListener('change', () => {
+  browser.storage.local.set({ defaultCategory: defaultCategorySelect.value });
+});
+
+refreshCategoriesButton.addEventListener('click', () => {
+  loadCategories();
+});
+
+function showNewCategoryForm() {
+  newCategoryForm.classList.add('visible');
+  showNewCategoryButton.style.display = 'none';
+  newCategoryInput.focus();
+}
+
+function hideNewCategoryForm() {
+  newCategoryForm.classList.remove('visible');
+  showNewCategoryButton.style.display = '';
+  newCategoryInput.value = '';
+  newCategorySavePath.value = '';
+}
+
+showNewCategoryButton.addEventListener('click', showNewCategoryForm);
+cancelNewCategoryButton.addEventListener('click', hideNewCategoryForm);
+
+createCategoryButton.addEventListener('click', async () => {
+  const categoryName = newCategoryInput.value.trim();
+  if (!categoryName) {
+    newCategoryInput.focus();
+    return;
+  }
+
+  const savePath = newCategorySavePath.value.trim();
+
+  const success = await browser.runtime.sendMessage({
+    action: "createCategory",
+    categoryName: categoryName,
+    savePath: savePath
+  });
+
+  if (success) {
+    hideNewCategoryForm();
+    await loadCategories();
+    defaultCategorySelect.value = categoryName;
+    browser.storage.local.set({ defaultCategory: categoryName });
+  } else {
+    alert('Failed to create category');
+  }
 });

@@ -17,11 +17,15 @@ async function login() {
     return response.text();
 }
 
-async function addTorrent(urls, credentials) {
+async function addTorrent(urls, credentials, category = null) {
     const { url } = credentials;
+    const params = { urls };
+    if (category) {
+      params.category = category;
+    }
     const response = await fetch(`${url}/api/v2/torrents/add`, {
         method: "POST",
-        body: new URLSearchParams({urls}),
+        body: new URLSearchParams(params),
     });
     if (response.status === 200) {
       browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
@@ -31,6 +35,26 @@ async function addTorrent(urls, credentials) {
         });
       });
     }
+}
+
+async function getCategories() {
+    const { url } = await getCredentials();
+    await login();
+    const response = await fetch(`${url}/api/v2/torrents/categories`);
+    if (response.status === 200) {
+      return await response.json();
+    }
+    return {};
+}
+
+async function createCategory(categoryName, savePath = '') {
+    const { url } = await getCredentials();
+    await login();
+    const response = await fetch(`${url}/api/v2/torrents/createCategory`, {
+        method: "POST",
+        body: new URLSearchParams({ category: categoryName, savePath }),
+    });
+    return response.status === 200;
 }
 
 async function openQbit() {
@@ -53,12 +77,27 @@ async function regularLogin(tabId) {
 }
 
 async function createContextMenu() {
-  await browser.contextMenus.removeAll()
-  browser.contextMenus.create(
-  {
+  await browser.contextMenus.removeAll();
+  const { defaultCategory } = await browser.storage.local.get('defaultCategory');
+  const categoryLabel = defaultCategory ? ` [${defaultCategory}]` : '';
+
+  browser.contextMenus.create({
     id: "sendToQbit",
-    title: "Send to qBittorrent",
+    title: `Send to qBittorrent${categoryLabel}`,
     contexts: ["link"],
+  });
+  browser.contextMenus.create({
+    id: "sendToQbitWithCategory",
+    title: "Send to qBittorrent (choose category...)",
+    contexts: ["link"],
+  });
+}
+
+async function updateContextMenuTitle() {
+  const { defaultCategory } = await browser.storage.local.get('defaultCategory');
+  const categoryLabel = defaultCategory ? ` [${defaultCategory}]` : '';
+  browser.contextMenus.update("sendToQbit", {
+    title: `Send to qBittorrent${categoryLabel}`
   });
 }
 
@@ -74,7 +113,16 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "sendToQbit") {
     const credentials = await getCredentials();
     await login();
-    addTorrent(info.linkUrl, credentials)
+    const { defaultCategory } = await browser.storage.local.get('defaultCategory');
+    addTorrent(info.linkUrl, credentials, defaultCategory || null);
+  } else if (info.menuItemId === "sendToQbitWithCategory") {
+    await browser.storage.local.set({ pendingTorrentUrl: info.linkUrl });
+    browser.windows.create({
+      url: browser.runtime.getURL("category-picker.html"),
+      type: "popup",
+      width: 380,
+      height: 300
+    });
   }
 });
 
@@ -82,12 +130,16 @@ browser.storage.onChanged.addListener(async (changes, areaName) => {
   if (areaName === "local" && changes.magnetLink) {
     const credentials = await getCredentials();
     await login();
-    addTorrent(changes.magnetLink.newValue, credentials)
+    const { defaultCategory } = await browser.storage.local.get('defaultCategory');
+    addTorrent(changes.magnetLink.newValue, credentials, defaultCategory || null);
+  }
+  if (areaName === "local" && changes.defaultCategory) {
+    updateContextMenuTitle();
   }
 });
 
 let loginTabs = new Set();
-browser.runtime.onMessage.addListener(async (message) => {
+browser.runtime.onMessage.addListener(async (message, sender) => {
   if (message.action === 'disableCSRF') {
     const tabId = await openQbit();
     await regularLogin();
@@ -99,6 +151,18 @@ browser.runtime.onMessage.addListener(async (message) => {
     if (response !== 'Ok.') {
       await regularLogin(tabId)
     }
+  }
+  if (message.action === "getCategories") {
+    return getCategories();
+  }
+  if (message.action === "createCategory") {
+    return createCategory(message.categoryName, message.savePath || '');
+  }
+  if (message.action === "addTorrentWithCategory") {
+    const credentials = await getCredentials();
+    await login();
+    addTorrent(message.url, credentials, message.category || null);
+    return true;
   }
 });
 
